@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "cuda: tests that require a CUDA-capable PyTorch runtime",
+  "tilelang: optional tests that compile and run TileLang kernels",
+]
+
