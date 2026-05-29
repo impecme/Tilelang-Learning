@@ -209,6 +209,8 @@ from kernels.reference import naive_attention_forward
 
 意思是从 `kernels/reference.py` 里导入函数。
 
+导入时，Python 会执行这个文件中的顶层代码，并把里面定义的函数、类、变量放到模块对象里。为了避免“只是 import 一个函数，却顺便跑了整个脚本”，Python 程序常用入口保护。
+
 常见入口写法：
 
 ```python
@@ -219,16 +221,82 @@ if __name__ == "__main__":
     main()
 ```
 
-含义：
+这里有三个概念：
 
-- 直接运行这个文件时，执行 `main()`。
-- 被其它文件 import 时，不自动执行 `main()`。
+- `main()`：普通函数名，不是 Python 语法关键字，只是约定俗成地表示“脚本主流程”。
+- `__name__`：当前文件作为模块时的名字。
+- `"__main__"`：当前文件被直接运行时，Python 给 `__name__` 设置的特殊值。
+
+直接运行一个文件：
+
+```bash
+python3 scripts/python_for_cpp_smoke.py
+```
+
+此时该文件内部：
+
+```python
+__name__ == "__main__"
+```
+
+所以会执行：
+
+```python
+main()
+```
+
+如果这个文件被别的代码 import：
+
+```python
+import scripts.python_for_cpp_smoke
+```
+
+此时它的 `__name__` 通常是：
+
+```text
+scripts.python_for_cpp_smoke
+```
+
+不等于 `"__main__"`，因此不会自动执行 `main()`。
+
+这不是在判断“文件名是不是 main”，而是在判断“当前模块是不是正在作为程序入口运行”。
+
+C++ 对照：
+
+- C++ 的 `int main()` 是语言规定的程序入口。
+- Python 的 `main()` 只是普通函数。
+- `if __name__ == "__main__": main()` 是一种手动指定脚本入口的习惯写法。
+
+这个写法的好处：
+
+- 文件可以直接当脚本运行。
+- 文件也可以被其它模块 import 复用函数。
+- import 时不会误触发 benchmark、测试、打印或耗时逻辑。
 
 本工程里的脚本和 benchmark 都会用这种模式。
 
 ## 7. Decorator：`@something` 是什么
 
-Python decorator 是“包装函数”的语法。比如：
+Python decorator 是“把函数交给另一个对象处理”的语法。通用规则是：
+
+```python
+@decorator
+def f():
+    ...
+```
+
+大致等价于：
+
+```python
+def f():
+    ...
+
+f = decorator(f)
+```
+
+也就是说，`decorator` 会接收原来的函数 `f`，然后返回一个新的函数或对象。至于它到底是在“包装函数”“打标记”“注册函数”，还是“交给 JIT 编译器接管”，取决于这个 decorator 自己怎么实现。
+
+比如：
 
 ```python
 @pytest.mark.cuda
@@ -236,7 +304,7 @@ def test_x():
     ...
 ```
 
-等价于把 `test_x` 交给 `pytest.mark.cuda` 标记一下。
+这里更像是把 `test_x` 交给 `pytest.mark.cuda` 标记一下，让 pytest 知道这是一个 CUDA 相关测试。
 
 TileLang 中：
 
@@ -627,7 +695,12 @@ if __name__ == "__main__":
    - 给 `ceildiv` 写一个 test。
    - 故意写错一次，观察 pytest 输出。
 
-6. 运行这个阶段的配套脚本：
+6. 入口保护：
+   - 找到 `scripts/python_for_cpp_smoke.py` 末尾的 `if __name__ == "__main__":`。
+   - 解释直接运行脚本时为什么会进入 `main()`。
+   - 解释被其它文件 import 时为什么不应该自动跑完整 demo。
+
+7. 运行这个阶段的配套脚本：
 
    ```bash
    python3 scripts/python_for_cpp_smoke.py
@@ -647,6 +720,7 @@ if __name__ == "__main__":
 - Python 的 `b = a` 和 C++ 拷贝有什么不同？
 - `@pytest.mark.parametrize` 是什么？
 - `@tilelang.jit` 为什么不是普通函数调用？
+- `__name__ == "__main__"` 为什么能区分直接运行和 import？
 - `torch.Tensor.shape/dtype/device` 分别是什么？
 - `transpose(-2, -1)` 对 `(B,H,S,D)` 做了什么？
 - 为什么 PyTorch for 循环不是写高性能算子的方式？
