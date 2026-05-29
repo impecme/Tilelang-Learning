@@ -26,13 +26,12 @@
 
 ## 5. Debugging
 
-- 小 shape 先过，再上大 shape。
-- 遇到编译错误先看 TileLang IR/lowering 信息。
-- 遇到结果错误先定位最大误差所在 index。
+- 先让小 shape 通过，再上大 shape。
+- 遇到编译错误时先看 TileLang IR/lowering 信息。
+- 遇到结果错误时先定位最大误差所在 index。
 
 ## 6. Release Criteria
 
 - correctness 覆盖正常 shape、边界 shape、非整除 shape。
 - benchmark 至少包含 PyTorch reference 和 PyTorch optimized baseline。
-- README 或 report 说明已知限制和下一步计划。
-
+- 在 README 或 report 中说明已知限制和下一步计划。

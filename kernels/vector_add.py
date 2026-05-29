@@ -1,4 +1,4 @@
-"""Week 1 TileLang vector-add exercise."""
+"""Stage 01 TileLang vector-add exercise."""
 
 from functools import lru_cache
 

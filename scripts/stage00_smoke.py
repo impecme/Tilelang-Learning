@@ -15,7 +15,7 @@ from kernels.vector_add import vector_add_reference
 
 
 def main() -> None:
-    print("Week 01 smoke test")
+    print("Stage 00 smoke test")
     a = torch.randn(8)
     b = torch.randn(8)
     print("vector_add_reference:", vector_add_reference(a, b))

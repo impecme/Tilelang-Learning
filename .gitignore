@@ -10,6 +10,3 @@ dist/
 reports/*.json
 reports/*.csv
 reports/*.txt
-reports/*.md
-!reports/README.md
-
