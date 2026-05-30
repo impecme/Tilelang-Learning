@@ -31,17 +31,17 @@ Python 基础可以较薄弱，这个阶段就是为了补齐它。
 
 ## 1. Python 和 C++ 的思维差异
 
-| 主题 | C++ 常见思维 | Python 常见思维 |
-| --- | --- | --- |
-| 编译/运行 | 先编译再运行 | 解释执行为主，也有 JIT/扩展 |
-| 类型 | 静态类型，编译期检查多 | 动态类型，运行期错误更多 |
-| 变量 | 更接近对象或内存位置 | 名字绑定到对象引用 |
-| 作用域 | 花括号 `{}` | 缩进 |
-| 头文件 | `.h/.hpp` 声明 | import 模块 |
-| 内存 | RAII、指针、引用 | 引用计数 + GC，通常不手动释放 |
-| 性能 | for 循环可很快 | Python for 循环慢，重计算交给 NumPy/PyTorch/CUDA |
-| 泛型 | template | duck typing、type hint、runtime check |
-| 错误 | 返回码/异常 | 异常很常见 |
+| 主题      | C++ 常见思维           | Python 常见思维                                  |
+| --------- | ---------------------- | ------------------------------------------------ |
+| 编译/运行 | 先编译再运行           | 解释执行为主，也有 JIT/扩展                      |
+| 类型      | 静态类型，编译期检查多 | 动态类型，运行期错误更多                         |
+| 变量      | 更接近对象或内存位置   | 名字绑定到对象引用                               |
+| 作用域    | 花括号 `{}`            | 缩进                                             |
+| 头文件    | `.h/.hpp` 声明         | import 模块                                      |
+| 内存      | RAII、指针、引用       | 引用计数 + GC，通常不手动释放                    |
+| 性能      | for 循环可很快         | Python for 循环慢，重计算交给 NumPy/PyTorch/CUDA |
+| 泛型      | template               | duck typing、type hint、runtime check            |
+| 错误      | 返回码/异常            | 异常很常见                                       |
 
 最重要的一点：Python 写 AI 工程时，Python 常常负责“组织计算”，真正大规模计算交给 PyTorch CUDA kernel、TileLang kernel 或 C++/CUDA 扩展。
 
@@ -408,60 +408,210 @@ with pytest.raises(ValueError):
 
 ## 11. PyTorch Tensor 最小基础
 
-创建 tensor：
+PyTorch 的核心对象是 `torch.Tensor`。可以先把 tensor 理解成“带元信息的多维数组”。
+
+和 C++ 里的 `std::vector<float>` 相比，tensor 不只是保存一段数据，它还保存：
+
+- `shape`：每个维度有多长。
+- `dtype`：每个元素是什么类型。
+- `device`：数据在 CPU 还是 GPU。
+- `stride`：每个维度移动 1 个 index 时，底层存储跳多少个元素。
+- `requires_grad`：是否需要 autograd 记录梯度。本工程主要写 inference/reference，通常不需要梯度。
+
+最小创建方式：
 
 ```python
 import torch
 
 x = torch.randn((2, 3))
 y = torch.zeros((2, 3))
+z = torch.ones((2, 3))
 ```
 
-CUDA tensor：
+常见创建函数：
+
+| 写法                  | 含义               | 常见用途                 |
+| --------------------- | ------------------ | ------------------------ |
+| `torch.randn(shape)`  | 正态分布随机数     | 构造测试输入             |
+| `torch.zeros(shape)`  | 全 0               | 初始化输出或 mask        |
+| `torch.ones(shape)`   | 全 1               | 构造简单参考输入         |
+| `torch.empty(shape)`  | 未初始化内存       | 性能路径中先分配，后写入 |
+| `torch.tensor([...])` | 从 Python 数据创建 | 小例子、手算验证         |
+
+`torch.empty` 不会把内容清零：
 
 ```python
-x = torch.randn((2, 3), device="cuda", dtype=torch.float16)
+x = torch.empty((2, 3))
+print(x)
 ```
 
-常用属性：
+它里面可能是任意旧值。只有确定后面会完整写入时，才适合用 `empty`。
+
+常用属性可以直接打印：
 
 ```python
+import torch
+
+x = torch.randn((2, 3), dtype=torch.float32)
+
 x.shape
 x.dtype
 x.device
 x.ndim
 x.is_cuda
 x.is_contiguous()
+x.requires_grad
 ```
 
-改变 dtype/device：
+这些属性的含义：
+
+- `x.shape`：形状，例如 `torch.Size([2, 3])`，很像 tuple。
+- `x.ndim`：维度数量，也叫 rank；`(2, 3)` 是 rank-2。
+- `x.dtype`：数据类型，例如 `torch.float32`、`torch.float16`、`torch.bfloat16`。
+- `x.device`：所在设备，例如 `cpu` 或 `cuda:0`。
+- `x.is_cuda`：是否在 CUDA GPU 上。
+- `x.is_contiguous()`：底层内存是否按默认连续布局排列。
+- `x.requires_grad`：是否参与 autograd。算子 correctness reference 通常不需要它。
+
+CPU tensor 和 CUDA tensor 的区别：
 
 ```python
-x_fp32 = x.float()
-x_cuda = x.to("cuda")
-x_half = x.to(dtype=torch.float16)
+cpu_x = torch.randn((2, 3), device="cpu")
+
+if torch.cuda.is_available():
+    cuda_x = torch.randn((2, 3), device="cuda", dtype=torch.float16)
+    print(cuda_x.device)
 ```
 
-注意：`.to(...)` 通常返回新 tensor，不一定原地修改。
+CPU tensor 的数据在主机内存里，CUDA tensor 的数据在 GPU 显存里。TileLang kernel 需要 CUDA tensor；如果传 CPU tensor，通常应该在 Python 包装层直接报错。
+
+改变 dtype/device 的常见写法：
+
+```python
+x = torch.randn((2, 3))
+
+x_fp32 = x.float()
+x_half = x.half()
+x_bf16 = x.to(dtype=torch.bfloat16)
+
+if torch.cuda.is_available():
+    x_cuda = x.to("cuda")
+    x_back = x_cuda.cpu()
+```
+
+注意：`.to(...)`、`.float()`、`.half()`、`.cpu()` 通常返回新 tensor，不一定原地修改。
+
+```python
+x = torch.randn((2, 3))
+y = x.float()
+
+print(x is y)  # 不要依赖它一定 True 或 False
+```
+
+学习时更稳的写法是把结果接住：
+
+```python
+x = x.to(dtype=torch.float32)
+```
+
+本工程写 PyTorch reference 时，常见习惯是先转成 fp32 做稳定计算：
+
+```python
+scores = q.float() @ k.float().transpose(-2, -1)
+```
+
+这样 fp16/bf16 输入也能有更稳定的参考结果。
 
 ## 12. PyTorch Shape 操作
 
-常见操作：
+shape 是 PyTorch 代码里最重要的调试线索。只要 shape 推导清楚，很多 attention/GEMM 问题会立刻变简单。
+
+索引和切片：
 
 ```python
-x.reshape(2, 3, 4)
-x.transpose(-2, -1)
-x.permute(0, 2, 1)
-x.contiguous()
-x.view(2, 12)
+import torch
+
+x = torch.arange(24).reshape(2, 3, 4)
+
+print(x.shape)       # torch.Size([2, 3, 4])
+print(x[0].shape)    # torch.Size([3, 4])
+print(x[:, 1:].shape)  # torch.Size([2, 2, 4])
+print(x[..., -1].shape)  # torch.Size([2, 3])
+```
+
+这里：
+
+- `x[0]`：取第 0 维的第一个元素，维度数量减少 1。
+- `x[:, 1:]`：第 0 维全取，第 1 维从 1 取到结尾。
+- `...`：省略中间维度。
+- `-1`：最后一个 index，或最后一个维度。
+
+`dim=-1` 表示最后一维：
+
+```python
+x = torch.randn((2, 3, 4))
+
+print(x.sum(dim=-1).shape)  # (2, 3)
+print(x.max(dim=-1).values.shape)  # (2, 3)
+```
+
+在 softmax 中：
+
+```python
+import torch
+
+scores = torch.randn((2, 8, 4, 4))
+p = torch.softmax(scores, dim=-1)
+print(p.shape)
+print(p.sum(dim=-1))
+```
+
+意思是对最后一维做 softmax。Attention 的 `scores.shape = (B, H, S, S)`，最后一维表示“当前 query 对所有 key 的分数”，所以 softmax 要沿最后一维做。
+
+常见 shape 操作：
+
+```python
+import torch
+
+x = torch.arange(24)
+x3 = x.reshape(2, 3, 4)
+xt = x3.transpose(-2, -1)
+xp = x3.permute(0, 2, 1)
+xc = xt.contiguous()
+xv = x3.view(2, 12)
+
+print(x3.shape, xt.shape, xp.shape, xc.shape, xv.shape)
 ```
 
 区别：
 
-- `reshape`：尽量返回 view，不行就复制。
-- `view`：要求内存布局兼容。
-- `transpose/permute`：改变维度顺序，常导致非 contiguous。
-- `contiguous`：重新整理内存，使布局连续。
+- `reshape`：改逻辑形状；尽量返回 view，不行就复制。
+- `view`：也改逻辑形状，但要求内存布局兼容；非 contiguous 时经常失败。
+- `transpose`：交换两个维度。
+- `permute`：按指定顺序重排多个维度。
+- `contiguous`：重新整理底层内存，使布局变成默认连续。
+
+stride 是理解 contiguous 的关键：
+
+```python
+import torch
+
+x = torch.arange(24).reshape(2, 3, 4)
+xt = x.transpose(-2, -1)
+
+print(x.shape, x.stride(), x.is_contiguous())
+print(xt.shape, xt.stride(), xt.is_contiguous())
+
+xc = xt.contiguous()
+print(xc.shape, xc.stride(), xc.is_contiguous())
+```
+
+`transpose` 通常只是改变“如何解释底层存储”，不一定真的搬数据。因此逻辑 shape 变了，但底层数据不一定重新排列。TileLang kernel 常常假设 contiguous 输入，所以包装层需要检查：
+
+```python
+if not x.is_contiguous():
+    raise ValueError("expected contiguous tensor")
+```
 
 Attention 里常见：
 
@@ -487,18 +637,56 @@ k.transpose(-2, -1).shape = (B, H, D, S)
 q @ k.transpose(-2, -1)
 ```
 
+逐步看：
+
+```text
+q.shape = (B, H, S, D)
+k.shape = (B, H, S, D)
+k.transpose(-2, -1).shape = (B, H, D, S)
+q @ k.transpose(-2, -1) = (B, H, S, D) @ (B, H, D, S)
+scores.shape = (B, H, S, S)
+```
+
 ## 13. PyTorch 矩阵乘法
 
-二维 matmul：
+PyTorch 里 `@` 是矩阵乘法运算符，常用来写 `torch.matmul`：
 
 ```python
+C = A @ B
+```
+
+可以理解为：
+
+```python
+C = torch.matmul(A, B)
+```
+
+二维矩阵乘法规则：
+
+```python
+import torch
+
 A = torch.randn(2, 3)
 B = torch.randn(3, 4)
 C = A @ B
 print(C.shape)  # (2, 4)
 ```
 
-Batched matmul：
+shape 规则：
+
+```text
+A.shape = (M, K)
+B.shape = (K, N)
+C.shape = (M, N)
+```
+
+中间的 `K` 必须相同。每个输出元素是：
+
+```text
+C[i, j] = sum_k A[i, k] * B[k, j]
+```
+
+Batched matmul 是把前面的维度当成 batch：
 
 ```python
 Q = torch.randn(2, 8, 512, 64)
@@ -510,6 +698,28 @@ print(scores.shape)  # (2, 8, 512, 512)
 PyTorch 会把前面的维度 `(2, 8)` 当成 batch 维，对每个 batch 独立做矩阵乘。
 
 这就是 Attention 中 `QK^T` 的 PyTorch 写法。
+
+更详细地拆：
+
+```text
+Q[b, h].shape = (512, 64)
+K[b, h].shape = (512, 64)
+K[b, h].T.shape = (64, 512)
+Q[b, h] @ K[b, h].T = (512, 64) @ (64, 512)
+scores[b, h].shape = (512, 512)
+```
+
+因此整体：
+
+```text
+scores.shape = (B, H, S, S)
+```
+
+常见错误：
+
+- 忘记 `transpose(-2, -1)`，导致 `(S, D) @ (S, D)` 维度不匹配。
+- 把 `(B, S, H, D)` 当成 `(B, H, S, D)`。
+- 只看最后结果 shape，没有确认每个 batch/head 是否对应正确。
 
 ## 14. Broadcasting
 
@@ -525,18 +735,63 @@ y = x + bias
 
 `bias` 会自动按第 0 维扩展，相当于每一行都加同一个 bias。
 
+规则可以这样记：
+
+```text
+从最后一维开始对齐；
+两个维度相等，可以广播；
+其中一个维度是 1，可以扩展到另一个维度；
+缺失的前置维度可以当作 1。
+```
+
+例子：
+
+```python
+import torch
+
+x = torch.randn(2, 3)
+a = torch.randn(3)
+b = torch.randn(2, 1)
+
+print((x + a).shape)  # (2, 3)
+print((x + b).shape)  # (2, 3)
+```
+
+`a.shape = (3,)` 会被看成 `(1, 3)`，扩展到 `(2, 3)`。
+
+`b.shape = (2, 1)` 的最后一维是 1，可以扩展到 3。
+
 Attention 中 scale：
 
 ```python
+import math
+import torch
+
+scores = torch.randn((2, 8, 4, 4))
+scale = 1.0 / math.sqrt(64)
 scores = scores * scale
+print(scores.shape)
 ```
 
 `scale` 是一个 Python float，会广播到整个 tensor。
+
+mask 也经常依赖 broadcasting：
+
+```python
+scores = torch.randn(2, 8, 4, 4)
+mask = torch.ones(4, 4, dtype=torch.bool)
+
+masked_scores = scores.masked_fill(~mask, float("-inf"))
+print(masked_scores.shape)  # (2, 8, 4, 4)
+```
+
+这里 `mask.shape = (4, 4)` 会广播到 `(2, 8, 4, 4)`。这可能正是想要的，也可能是 bug：如果每个 batch/head 应该有不同 mask，就不能只传 `(4, 4)`。
 
 常见坑：
 
 - shape 不小心 broadcast 成合法但语义错误的结果。
 - 以为发生了复制，实际只是按规则虚拟扩展。
+- 只看没有报错，就以为语义正确。
 
 ## 15. PyTorch 和 Python for 循环
 
@@ -555,7 +810,56 @@ for i in range(N):
 y = x + 1
 ```
 
-但写 reference 或 debug 小 shape 时，Python loop 可以接受。写性能路径时，应交给 PyTorch/TileLang/CUDA。
+`y = x + 1` 看起来是一行 Python，但真正的大量元素计算发生在 PyTorch 的底层 C++/CUDA kernel 里。Python 只负责发起这个操作。
+
+这也是 AI 工程里常说的调用链：
+
+```text
+Python API -> PyTorch dispatcher -> CUDA/C++ backend -> GPU kernel -> GPU hardware
+```
+
+什么时候可以用 Python loop？
+
+- debug 小 shape。
+- 手写很朴素的 reference。
+- 打印中间值，帮助理解公式。
+
+什么时候不应该用 Python loop？
+
+- 大 tensor 的性能路径。
+- benchmark 中被测函数的核心计算。
+- 本来可以用 PyTorch/Tensor/TileLang/CUDA 表达的逐元素或矩阵计算。
+
+一个 correctness-first reference 可以先这样写：
+
+```python
+import torch
+
+
+def row_sum_reference_slow(x: torch.Tensor) -> torch.Tensor:
+    if x.ndim != 2:
+        raise ValueError("x must be rank-2")
+
+    out = torch.zeros((x.shape[0],), dtype=torch.float32, device=x.device)
+    for i in range(x.shape[0]):
+        for j in range(x.shape[1]):
+            out[i] += x[i, j].float()
+    return out
+```
+
+但更推荐的 PyTorch reference 是：
+
+```python
+import torch
+
+
+def row_sum_reference(x: torch.Tensor) -> torch.Tensor:
+    if x.ndim != 2:
+        raise ValueError("x must be rank-2")
+    return x.float().sum(dim=-1)
+```
+
+第一版适合理解，第二版更接近工程写法。
 
 ## 16. pytest 最小基础
 
@@ -590,6 +894,71 @@ def test_x(dtype):
 
 ```python
 torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+```
+
+`assert_close` 不是要求完全相等，而是检查：
+
+```text
+abs(actual - expected) <= atol + rtol * abs(expected)
+```
+
+其中：
+
+- `atol`：绝对误差容忍。
+- `rtol`：相对误差容忍。
+
+fp32 通常可以设得更严格；fp16/bf16 因为精度低，通常需要更宽松：
+
+```python
+torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+```
+
+本工程写 reference test 时，建议固定模板：
+
+```python
+import torch
+
+
+def row_sum_reference(x: torch.Tensor) -> torch.Tensor:
+    if x.ndim != 2:
+        raise ValueError("x must be rank-2")
+    return x.float().sum(dim=-1)
+
+
+def test_row_sum_reference():
+    x = torch.randn((4, 8), dtype=torch.float16)
+
+    actual = row_sum_reference(x)
+    expected = x.float().sum(dim=-1)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
+```
+
+如果要测试 CUDA：
+
+```python
+import pytest
+import torch
+
+
+def row_sum_reference(x: torch.Tensor) -> torch.Tensor:
+    if x.ndim != 2:
+        raise ValueError("x must be rank-2")
+    return x.float().sum(dim=-1)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_row_sum_reference_cuda():
+    x = torch.randn((4, 8), device="cuda", dtype=torch.float16)
+    actual = row_sum_reference(x)
+    expected = x.float().sum(dim=-1)
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
+```
+
+算子开发里，PyTorch reference 的作用是给 TileLang/CUDA kernel 提供“标准答案”。开发顺序建议固定：
+
+```text
+写 PyTorch reference -> 写 correctness test -> 写 TileLang kernel -> 对比 actual/expected
 ```
 
 ## 17. 本工程中最需要先读懂的 Python 语法
@@ -677,8 +1046,12 @@ if __name__ == "__main__":
 
 2. Tensor 基础：
    - 创建 `x = torch.randn((2, 3, 4))`。
-   - 打印 `shape/dtype/device/ndim`。
+   - 打印 `shape/dtype/device/ndim/stride/is_contiguous/requires_grad`。
+   - 分别创建 `zeros/ones/empty/tensor`，观察初始值差异。
+   - 如果有 CUDA，做 `x_cuda = x.to("cuda")`，打印 `x.device` 和 `x_cuda.device`。
+   - 做 `x_half = x.to(dtype=torch.float16)`，确认原始 `x.dtype` 是否改变。
    - 做 `x.transpose(-2, -1)`，打印 shape 和 `is_contiguous()`。
+   - 对 transpose 结果调用 `.contiguous()`，再次打印 `stride()` 和 `is_contiguous()`。
 
 3. Matmul 基础：
    - 创建 `A=(2,3)`，`B=(3,4)`。
@@ -691,16 +1064,29 @@ if __name__ == "__main__":
    - 打印 `scores.shape`。
    - 解释为什么是 `(2,8,16,16)`。
 
-5. pytest：
+5. Broadcasting：
+   - 创建 `x = torch.randn((2, 3))`。
+   - 分别创建 `a = torch.randn(3)` 和 `b = torch.randn(2, 1)`。
+   - 计算 `x + a`、`x + b`，写出广播前后的 shape。
+   - 尝试 `x + torch.randn(2)`，观察报错并解释最后一维为什么对不上。
+
+6. 小型 PyTorch reference：
+   - 实现 `row_sum_reference(x)`。
+   - 要求 `x.ndim == 2`，否则 `raise ValueError`。
+   - 返回 `x.float().sum(dim=-1)`。
+   - 用 `torch.testing.assert_close` 和 PyTorch 原生表达式对比。
+
+7. pytest：
    - 给 `ceildiv` 写一个 test。
    - 故意写错一次，观察 pytest 输出。
+   - 给 `row_sum_reference` 增加一个正常输入 test 和一个错误 rank test。
 
-6. 入口保护：
+8. 入口保护：
    - 找到 `scripts/python_for_cpp_smoke.py` 末尾的 `if __name__ == "__main__":`。
    - 解释直接运行脚本时为什么会进入 `main()`。
    - 解释被其它文件 import 时为什么不应该自动跑完整 demo。
 
-7. 运行这个阶段的配套脚本：
+9. 运行这个阶段的配套脚本：
 
    ```bash
    python3 scripts/python_for_cpp_smoke.py
@@ -721,7 +1107,12 @@ if __name__ == "__main__":
 - `@pytest.mark.parametrize` 是什么？
 - `@tilelang.jit` 为什么不是普通函数调用？
 - `__name__ == "__main__"` 为什么能区分直接运行和 import？
-- `torch.Tensor.shape/dtype/device` 分别是什么？
+- `torch.Tensor.shape/dtype/device/stride/contiguous` 分别是什么？
+- `rank`、`ndim`、`dim=-1` 分别是什么意思？
+- `.to("cuda")`、`.cpu()`、`.float()`、`.half()` 为什么要接住返回值？
 - `transpose(-2, -1)` 对 `(B,H,S,D)` 做了什么？
+- `reshape`、`view`、`transpose`、`permute`、`contiguous` 的区别是什么？
+- broadcasting 为什么可能让 shape 合法但语义错误？
+- 能否写一个简单 PyTorch reference test，例如 `row_sum_reference`？
 - 为什么 PyTorch for 循环不是写高性能算子的方式？
 - 为什么 CUDA benchmark 不能只用普通 `time.time()`？
