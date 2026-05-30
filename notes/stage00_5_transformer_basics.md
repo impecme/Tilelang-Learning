@@ -634,3 +634,21 @@ FlashAttention 的思想：
 4. 解释练习：
    - 用自己的话解释 `QK^T -> softmax -> P@V`。
    - 不允许只背公式，要说出每一步在“找信息、分配权重、汇总信息”中的角色。
+
+对应练习脚本在 `notes/exercise/stage00_5_transformer_basics/`：
+
+```bash
+python3 notes/exercise/stage00_5_transformer_basics/task1.py
+python3 notes/exercise/stage00_5_transformer_basics/task2.py
+python3 notes/exercise/stage00_5_transformer_basics/task3.py
+python3 notes/exercise/stage00_5_transformer_basics/task4.py
+```
+
+脚本对应关系：
+
+- `task1.py`：对应第 1 题，重点观察二维情况下 `(128,64) @ (64,128) = (128,128)`，以及 `P @ V` 为什么回到 `(128,64)`。
+- `task2.py`：对应第 2 题，重点观察 PyTorch 多维 matmul 中前面的 `(B,H)` 是 batch 维，最后两个维度才做矩阵乘。
+- `task3.py`：对应第 3 题，重点观察 `P.sum(dim=-1)` 接近 1，说明 softmax 后每一行都是概率分布。
+- `task4.py`：对应第 4 题，重点把公式翻译成直觉：`QK^T` 找匹配，`softmax` 分配权重，`P@V` 汇总信息。
+
+跑脚本时不要只看是否通过，还要手动对照每一行 shape 输出，把 `S`、`D`、`B`、`H` 分别对应到公式里。

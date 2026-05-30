@@ -1,0 +1,5 @@
+suite,name,backend,shape,dtype,latency_ms,warmup,repeat,notes
+optimization,tilelang_scale,tilelang,"M=128,N=128",float16,,1,2,"single teaching elementwise kernel"
+optimization,tilelang_add_bias,tilelang,"M=128,N=128",float16,,1,2,"single teaching row-bias kernel"
+optimization,tilelang_scale_causal_mask,tilelang,"S=128,S=128",float16,,1,2,"score scale + causal mask"
+decoder_block,tilelang_decoder_block,tilelang,"B=1,S=128,H=128,heads=2,ffn=128,vocab=128",float16,,1,1,"optimized TileLang teaching path"

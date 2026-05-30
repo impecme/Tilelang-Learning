@@ -16,6 +16,7 @@
 cd /home/vipuser/Tilelang-Learning
 python3 -m pip install -r requirements.txt
 python3 scripts/check_env.py
+python3 scripts/check_learning_project.py
 pytest
 ```
 
@@ -39,6 +40,7 @@ Tilelang-Learning/
   benchmarks/     # latency/TFLOPS benchmark 入口
   notes/          # 阶段式学习笔记、概念导读、算子 checklist
   reports/        # 阶段报告、benchmark 输出、最终复盘
+  projects/       # 独立实战学习项目
   scripts/        # 环境检查和 smoke test
 ```
 
@@ -61,6 +63,7 @@ Tilelang-Learning/
 
 阶段入口：
 
+- [Learning Map - 从根笔记到 starter/full lab 的完整路线](notes/learning_map.md)
 - [Stage 00 - 环境、工程结构、学习方法](notes/stage00_env.md)
 - [Stage 00.25 - 面向 C++ 程序员的 Python/PyTorch 最小基础](notes/stage00_25_python_for_cpp.md)
 - [Stage 00.5 - 深度学习与 Transformer 最小背景](notes/stage00_5_transformer_basics.md)
@@ -78,6 +81,33 @@ Tilelang-Learning/
 - [Concepts Deep Dive - TileLang AI 算子开发细讲版](notes/concepts_deep_dive.md)
 - [Glossary - AI 算子开发中英文术语对照](notes/glossary_zh_en.md)
 - [TileLang AI 算子开发 Checklist](notes/operator_checklist.md)
+
+实战项目入口：
+
+- [TileLang Starter Three Stage Lab - 轻量入门三层项目](projects/tilelang_starter_three_stage_lab/README.md)
+- [TileLang Three Stage Lab - 基础、进阶、迷你 Decoder Block 三层项目](projects/tilelang_three_stage_lab/README.md)
+
+推荐顺序：先跑 `tilelang_starter_three_stage_lab` 建立第一轮直觉，再进入 `tilelang_three_stage_lab` 做系统学习和严格验收。
+
+Stage 00.25 配套练习：
+
+```bash
+cd /home/vipuser/Tilelang-Learning
+python3 scripts/run_stage00_25_exercise.py --list
+python3 scripts/run_stage00_25_exercise.py --task all
+pytest tests/test_stage00_25_python_for_cpp_exercise.py -q
+```
+
+动手 Lab 入口：
+
+```bash
+cd /home/vipuser/Tilelang-Learning/projects/tilelang_starter_three_stage_lab
+python3 scripts/run_starter_lab.py --lab all
+
+cd /home/vipuser/Tilelang-Learning/projects/tilelang_three_stage_lab
+python3 scripts/run_lab.py --lab all
+python3 scripts/demo_common_errors.py --case all
+```
 
 ## 毕业接口
 
@@ -110,6 +140,7 @@ Stage 00 smoke：
 
 ```bash
 python3 scripts/stage00_smoke.py
+python3 scripts/check_learning_project.py
 ```
 
 TileLang 编译 smoke：

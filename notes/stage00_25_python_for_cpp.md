@@ -723,25 +723,16 @@ scores.shape = (B, H, S, S)
 
 ## 14. Broadcasting
 
-Broadcasting 是 PyTorch 自动扩展维度的规则。
+Broadcasting 是 PyTorch 自动扩展维度的规则。当两个 tensor 的 shape 不完全一样时，PyTorch 会尝试把较小的 shape “虚拟扩展”成较大的 shape，然后再做逐元素计算。
 
-例子：
-
-```python
-x = torch.randn(2, 3)
-bias = torch.randn(3)
-y = x + bias
-```
-
-`bias` 会自动按第 0 维扩展，相当于每一行都加同一个 bias。
-
-规则可以这样记：
+核心规则：
 
 ```text
-从最后一维开始对齐；
+从最后一维开始往前对齐；
 两个维度相等，可以广播；
 其中一个维度是 1，可以扩展到另一个维度；
-缺失的前置维度可以当作 1。
+其中一个 tensor 缺失某个前置维度，可以把缺失维度当作 1；
+如果这些条件都不满足，就报错。
 ```
 
 例子：
@@ -750,16 +741,84 @@ y = x + bias
 import torch
 
 x = torch.randn(2, 3)
-a = torch.randn(3)
-b = torch.randn(2, 1)
+bias = torch.randn(3)
+y = x + bias
 
-print((x + a).shape)  # (2, 3)
-print((x + b).shape)  # (2, 3)
+print(y.shape)  # (2, 3)
 ```
 
-`a.shape = (3,)` 会被看成 `(1, 3)`，扩展到 `(2, 3)`。
+逐维对齐：
 
-`b.shape = (2, 1)` 的最后一维是 1，可以扩展到 3。
+```text
+x.shape    = (2, 3)
+bias.shape =    (3)
+```
+
+从最后一维对齐：
+
+```text
+x:      2   3
+bias:       3
+```
+
+最后一维 `3` 和 `3` 相等。`bias` 缺少前面的维度，等价于先看成：
+
+```text
+bias.shape = (1, 3)
+```
+
+然后从 `(1, 3)` 扩展成 `(2, 3)`，相当于每一行都加同一个 bias。
+
+维度为 1 的情况：
+
+```python
+import torch
+
+x = torch.randn(2, 3)
+b = torch.randn(2, 1)
+y = x + b
+
+print(y.shape)  # (2, 3)
+```
+
+逐维对齐：
+
+```text
+x.shape = (2, 3)
+b.shape = (2, 1)
+```
+
+```text
+x:  2   3
+b:  2   1
+```
+
+倒数第二维 `2` 和 `2` 相等。最后一维 `1` 可以扩展成 `3`。所以 `b` 的每一行只有一个值，这个值会加到该行所有列上。
+
+不能广播的情况：
+
+```python
+import torch
+
+x = torch.randn(2, 3)
+bad = torch.randn(2)
+
+y = x + bad
+```
+
+逐维对齐：
+
+```text
+x.shape   = (2, 3)
+bad.shape =    (2)
+```
+
+```text
+x:     2   3
+bad:       2
+```
+
+最后一维 `3` 和 `2` 不相等，也没有任何一个是 `1`，所以会报错。
 
 Attention 中 scale：
 
@@ -787,11 +846,54 @@ print(masked_scores.shape)  # (2, 8, 4, 4)
 
 这里 `mask.shape = (4, 4)` 会广播到 `(2, 8, 4, 4)`。这可能正是想要的，也可能是 bug：如果每个 batch/head 应该有不同 mask，就不能只传 `(4, 4)`。
 
+矩阵乘法里的 broadcasting 只作用在 batch 维。对于：
+
+```python
+C = A @ B
+```
+
+PyTorch 会让最后两个维度做矩阵乘法，前面的维度按 broadcasting 规则对齐。
+
+```python
+import torch
+
+A = torch.randn(2, 8, 16, 64)
+B = torch.randn(1, 8, 64, 32)
+C = A @ B
+
+print(C.shape)  # (2, 8, 16, 32)
+```
+
+最后两个维度：
+
+```text
+(16, 64) @ (64, 32) = (16, 32)
+```
+
+前面的 batch 维：
+
+```text
+A batch = (2, 8)
+B batch = (1, 8)
+```
+
+逐维对齐后，`8` 和 `8` 相等，`1` 可以扩展成 `2`，所以 batch shape 是 `(2, 8)`。
+
+Broadcasting 通常是虚拟扩展，不一定真的复制数据。比如 `bias.shape = (3,)` 加到 `x.shape = (2, 3)` 上，可以理解成：
+
+```text
+[[b0, b1, b2],
+ [b0, b1, b2]]
+```
+
+但 PyTorch 往往不会真的复制出两行 bias，而是通过 stride 规则让多个位置读同一份数据。这很高效，但也容易隐藏语义错误。
+
 常见坑：
 
 - shape 不小心 broadcast 成合法但语义错误的结果。
 - 以为发生了复制，实际只是按规则虚拟扩展。
 - 只看没有报错，就以为语义正确。
+- 本来想给每个 batch/head 不同参数，却传了一个会被所有 batch/head 共享的低维 tensor。
 
 ## 15. PyTorch 和 Python for 循环
 
@@ -877,17 +979,67 @@ pytest 会自动发现以 `test_` 开头的函数。
 跳过测试：
 
 ```python
+import pytest
+import torch
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_cuda_kernel():
     ...
 ```
 
+这里的 `skipif` 表示“如果条件成立，就跳过这个测试”。`torch.cuda.is_available()` 用来判断 CUDA 是否可用，`not` 是逻辑取反：
+
+```text
+有 CUDA: torch.cuda.is_available() -> True, not True -> False, 不跳过
+无 CUDA: torch.cuda.is_available() -> False, not False -> True, 跳过
+```
+
+`reason="CUDA is required"` 是跳过时显示的原因。
+
 参数化测试：
 
 ```python
+import pytest
+import torch
+
+
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 def test_x(dtype):
     ...
+```
+
+`parametrize` 表示让同一个测试函数用多组参数自动运行。上面的例子会运行两次：
+
+```text
+test_x(torch.float16)
+test_x(torch.bfloat16)
+```
+
+其中 `"dtype"` 对应函数参数名 `dtype`，列表里的每个值都会依次传进去。
+
+也可以参数化多个变量：
+
+```python
+import pytest
+import torch
+
+
+@pytest.mark.parametrize("shape", [(32,), (1000,)])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+def test_x(shape, dtype):
+    x = torch.randn(shape, dtype=dtype)
+    assert x.shape == shape
+    assert x.dtype == dtype
+```
+
+这会组合运行 4 次：
+
+```text
+shape=(32,), dtype=float16
+shape=(32,), dtype=float32
+shape=(1000,), dtype=float16
+shape=(1000,), dtype=float32
 ```
 
 比较浮点结果：
@@ -963,7 +1115,9 @@ def test_row_sum_reference_cuda():
 
 ## 17. 本工程中最需要先读懂的 Python 语法
 
-优先读懂这些：
+优先读懂这些。读代码时不需要一开始记住所有细节，先能判断“这行代码属于哪类作用”。
+
+### 17.1 Import：把工具拿进当前文件
 
 ```python
 from __future__ import annotations
@@ -972,29 +1126,164 @@ from pathlib import Path
 import torch
 ```
 
+理解：
+
+- `from __future__ import annotations`：让类型标注延迟解析，常用于减少运行期类型依赖问题。读代码时可以先理解成“让 type hint 更灵活”。
+- `from functools import lru_cache`：从标准库 `functools` 里导入 `lru_cache`，后面可以用 `@lru_cache` 做缓存。
+- `from pathlib import Path`：导入路径工具 `Path`，比手写字符串路径更稳。
+- `import torch`：导入 PyTorch 主模块，后面通过 `torch.randn`、`torch.float16`、`torch.testing.assert_close` 等调用 PyTorch 功能。
+
+C++ 对照：
+
+```cpp
+#include <vector>
+#include <filesystem>
+```
+
+Python 的 `import` 更像“加载模块对象，并把名字放到当前作用域”。
+
+### 17.2 Type Hint：说明参数和返回值类型
+
 ```python
 def f(x: torch.Tensor) -> torch.Tensor:
     ...
 ```
+
+理解：
+
+- `def f(...)`：定义函数 `f`。
+- `x: torch.Tensor`：参数 `x` 期望是 PyTorch tensor。
+- `-> torch.Tensor`：返回值期望也是 PyTorch tensor。
+- `...`：省略函数体，表示这里先不展开。
+
+这不是 C++ 那种强制编译期类型检查。它主要给人、IDE、静态检查工具看。真正重要的输入约束仍然经常要在函数内部显式检查。
+
+### 17.3 输入检查：不满足条件就主动报错
 
 ```python
 if x.ndim != 4:
     raise ValueError(...)
 ```
 
+理解：
+
+- `x.ndim`：tensor 的维度数量，也叫 rank。
+- `!=`：不等于。
+- `if x.ndim != 4`：如果 `x` 不是四维 tensor。
+- `raise ValueError(...)`：主动抛出值错误，告诉调用者输入不合法。
+
+在本工程里，常见检查包括：
+
+```python
+if not x.is_cuda:
+    raise ValueError("x must be a CUDA tensor")
+
+if not x.is_contiguous():
+    raise ValueError("x must be contiguous")
+
+if x.dtype not in (torch.float16, torch.bfloat16):
+    raise ValueError("unsupported dtype")
+```
+
+这种写法的目的不是“让代码更啰嗦”，而是把错误尽早暴露在 Python 层，避免进入 GPU kernel 后才出现更难定位的问题。
+
+### 17.4 Pytest Marker：给测试函数加规则
+
 ```python
 @pytest.mark.parametrize(...)
 @pytest.mark.skipif(...)
 ```
+
+理解：
+
+- `@pytest.mark.parametrize(...)`：让同一个测试函数用多组参数自动运行。
+- `@pytest.mark.skipif(...)`：满足条件时跳过测试。
+
+例子：
+
+```python
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_x(dtype):
+    ...
+```
+
+等价理解：
+
+```text
+用 dtype=torch.float16 跑一次
+用 dtype=torch.bfloat16 再跑一次
+```
+
+再看：
+
+```python
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_cuda_kernel():
+    ...
+```
+
+等价理解：
+
+```text
+如果没有 CUDA，就跳过这个测试；
+如果有 CUDA，就正常执行。
+```
+
+### 17.5 TileLang Decorator：把函数交给 TileLang 编译系统
 
 ```python
 @tilelang.jit
 @T.prim_func
 ```
 
+理解：
+
+- `@tilelang.jit`：把下面的 kernel factory 交给 TileLang JIT 处理。
+- `@T.prim_func`：声明下面的函数体是 TileLang/TIR 风格的 kernel 描述，不是普通 Python 业务逻辑。
+
+通用 decorator 规则是：
+
+```python
+@decorator
+def f():
+    ...
+```
+
+大致等价于：
+
+```python
+def f():
+    ...
+
+f = decorator(f)
+```
+
+所以看到 `@tilelang.jit` 时，可以先理解成：
+
+```text
+这个函数被 TileLang 接管；
+调用它时不只是执行普通 Python，而是参与生成/编译 GPU kernel。
+```
+
+### 17.6 程序入口：直接运行脚本时才执行 main
+
 ```python
 if __name__ == "__main__":
     main()
+```
+
+理解：
+
+- `__name__`：当前模块名。
+- 直接运行当前文件时，`__name__ == "__main__"`。
+- 被其它文件 `import` 时，`__name__` 是模块路径，例如 `scripts.python_for_cpp_smoke`。
+- `main()`：普通函数名，约定俗成地表示脚本主流程。
+
+这个写法保证：
+
+```text
+直接 python3 xxx.py 时，会执行 main()
+被其它文件 import 时，不会自动跑完整脚本
 ```
 
 读懂这些，就能开始读本项目的大部分代码。
@@ -1026,7 +1315,17 @@ if __name__ == "__main__":
    range(3)  # 0,1,2
    ```
 
-5. `and/or/not` 不是 `&&/||/!`。
+5. `and/or/not` 不是 `&&/||/!`：
+
+   ```python
+   flag = torch.cuda.is_available()
+
+   not flag      # 逻辑取反，类似 C/C++ 的 !flag
+   a and b       # 逻辑与，类似 &&
+   a or b        # 逻辑或，类似 ||
+   ```
+
+   在 `pytest.mark.skipif(not torch.cuda.is_available(), ...)` 中，`not` 的意思是“没有 CUDA 时条件成立”。
 
 6. Python 没有花括号作用域，靠缩进。
 
@@ -1040,64 +1339,26 @@ if __name__ == "__main__":
 
 ## 19. 小练习
 
-1. Python 基础：
-   - 写一个函数 `ceildiv(a, b)`。
-   - 输入 `a=1000, b=256`，输出 `4`。
+1. Python 基础： - 写一个函数 ceildiv(a, b)。 - 输入 a=1000, b=256，输出 4。
 
-2. Tensor 基础：
-   - 创建 `x = torch.randn((2, 3, 4))`。
-   - 打印 `shape/dtype/device/ndim/stride/is_contiguous/requires_grad`。
-   - 分别创建 `zeros/ones/empty/tensor`，观察初始值差异。
-   - 如果有 CUDA，做 `x_cuda = x.to("cuda")`，打印 `x.device` 和 `x_cuda.device`。
-   - 做 `x_half = x.to(dtype=torch.float16)`，确认原始 `x.dtype` 是否改变。
-   - 做 `x.transpose(-2, -1)`，打印 shape 和 `is_contiguous()`。
-   - 对 transpose 结果调用 `.contiguous()`，再次打印 `stride()` 和 `is_contiguous()`。
+2. Tensor 基础： - 创建 x = torch.randn((2, 3, 4))。 - 打印 shape/dtype/device/ndim/stride/is_contiguous/requires_grad。 - 分别创建 zeros/ones/empty/tensor，观察初始值差异。 - 如果有 CUDA，做 x_cuda = x.to("cuda")，打印 x.device 和 x_cuda.device。 - 做 x_half = x.to(dtype=torch.float16)，确认原始 x.dtype 是否改变。 - 做 x.transpose(-2, -1)，打印 shape 和 is_contiguous()。 - 对 transpose 结果调用 .contiguous()，再次打印 stride() 和 is_contiguous()。
 
-3. Matmul 基础：
-   - 创建 `A=(2,3)`，`B=(3,4)`。
-   - 计算 `C=A@B`。
-   - 手动写出 `C.shape` 为什么是 `(2,4)`。
+3. Matmul 基础： - 创建 A=(2,3)，B=(3,4)。 - 计算 C=A@B。 - 手动写出 C.shape 为什么是 (2,4)。
 
-4. Attention shape：
-   - 创建 `Q,K,V = torch.randn((2,8,16,64))`。
-   - 计算 `scores = Q @ K.transpose(-2, -1)`。
-   - 打印 `scores.shape`。
-   - 解释为什么是 `(2,8,16,16)`。
+4. Attention shape： - 创建 Q,K,V = torch.randn((2,8,16,64))。 - 计算 scores = Q @ K.transpose(-2, -1)。 - 打印 scores.shape。 - 解释为什么是 (2,8,16,16)。
 
-5. Broadcasting：
-   - 创建 `x = torch.randn((2, 3))`。
-   - 分别创建 `a = torch.randn(3)` 和 `b = torch.randn(2, 1)`。
-   - 计算 `x + a`、`x + b`，写出广播前后的 shape。
-   - 尝试 `x + torch.randn(2)`，观察报错并解释最后一维为什么对不上。
+5. Broadcasting： - 创建 x = torch.randn((2, 3))。 - 分别创建 a = torch.randn(3) 和 b = torch.randn(2, 1)。 - 计算 x + a、x + b，写出广播前后的 shape。 - 尝试 x + torch.randn(2)，观察报错并解释最后一维为什么对不上。
 
-6. 小型 PyTorch reference：
-   - 实现 `row_sum_reference(x)`。
-   - 要求 `x.ndim == 2`，否则 `raise ValueError`。
-   - 返回 `x.float().sum(dim=-1)`。
-   - 用 `torch.testing.assert_close` 和 PyTorch 原生表达式对比。
+6. 小型 PyTorch reference： - 实现 row_sum_reference(x)<span data-diff-start="56"></span>。 - 要求 x.ndim == 2，否则 raise ValueError。 - 返回 x.float().sum(dim=-1)。 - 用 torch.testing.assert_close 和 PyTorch 原生表达式对比。
 
-7. pytest：
-   - 给 `ceildiv` 写一个 test。
-   - 故意写错一次，观察 pytest 输出。
-   - 给 `row_sum_reference` 增加一个正常输入 test 和一个错误 rank test。
+7. pytest： - 给 ceildiv 写一个 test。 - 故意写错一次，观察 pytest 输出。 - 给 row_sum_reference 增加一个正常输入 test 和一个错误 rank test。
 
-8. 入口保护：
-   - 找到 `scripts/python_for_cpp_smoke.py` 末尾的 `if __name__ == "__main__":`。
-   - 解释直接运行脚本时为什么会进入 `main()`。
-   - 解释被其它文件 import 时为什么不应该自动跑完整 demo。
+8. 入口保护： - 找到 scripts/python_for_cpp_smoke.py 末尾的 if __name__ == "__main__":。 - 解释直接运行脚本时为什么会进入 main()。 - 解释被其它文件 import 时为什么不应该自动跑完整 demo。
 
 9. 运行这个阶段的配套脚本：
-
-   ```bash
-   python3 scripts/python_for_cpp_smoke.py
-   ```
-
-   观察：
-   - Python list 赋值后的共享引用。
-   - decorator 如何包装函数。
-   - tensor 的 `shape/dtype/device/ndim`。
-   - `transpose(-2, -1)` 为什么会改变 contiguous 状态。
-   - `Q @ K.transpose(-2, -1)` 和 `P @ V` 的 shape。
+``
+python3 scripts/python_for_cpp_smoke.py
+``
 
 ## 20. 阶段验收
 
